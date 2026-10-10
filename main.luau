@@ -5,7 +5,6 @@
 --   local tab = win:Tab("main")
 --   local g = tab:Group("group")
 --   g:Checkbox("enable", false, function(v) end, {flag = "my_flag"})
---   g:AvatarCard(game.Players.LocalPlayer)
 --   Library:BindToggle(win)
 
 local UIS          = game:GetService("UserInputService")
@@ -289,7 +288,7 @@ local function ensureFolder()
     if not isfolder then return end
     if not isfolder(CONFIG_FOLDER) then pcall(makefolder, CONFIG_FOLDER) end
 end
-ensureFolder()
+ensureFolder()  -- create it right away so it shows up in the executor folder list
 
 local function configPath(name) return CONFIG_FOLDER .. "/" .. name .. ".json" end
 
@@ -617,6 +616,7 @@ function Library.Notify(title, body, duration, accent)
 
     tween(row, 0.22, {GroupTransparency = 0}):Play()
 
+    -- two timers: tween completion + hard fallback in case tween dies
     task.delay(duration, function()
         if not row.Parent then return end
         local fadeOut = TweenService:Create(row,
@@ -707,7 +707,7 @@ local function addResizeHandles(canvas, onResize)
             local ox = (e.sx < 0) and (startSize.X - w) or 0
             local oy = (e.sy < 0) and (startSize.Y - ht) or 0
 
-            -- keep the window from being shoved off-screen
+            -- keep the whole window on screen so resize can't shove it off
             local vp = workspace.CurrentCamera.ViewportSize
             local nx = startPos.X.Offset + ox
             local ny = startPos.Y.Offset + oy
@@ -1238,6 +1238,7 @@ local function buildComboPopup(box, items, isMulti, getState, onPick)
         end)
     end
 
+    -- click-off catcher
     local blocker = new("TextButton", {
         Name = "Blocker", BackgroundTransparency = 1, Text = "", AutoButtonColor = false,
         Size = UDim2.fromScale(1, 1), ZIndex = 500,
@@ -1341,6 +1342,7 @@ local function makeKeybindBox(parent, key, mode, onKey, onMode)
         end)
     end)
 
+    -- right click opens mode picker (toggle / hold / always)
     local function openModePopup()
         closeAllPopups()
         local abs = bFill.AbsolutePosition
@@ -1513,195 +1515,6 @@ function Library._GroupMethods:ButtonRow(buttons, columns)
     return host
 end
 
--- ============================================================
--- image controls (esp previews, avatars, asset thumbs)
--- ============================================================
-
--- generic image. props = { image = "...", height = 100, rounded = 6, text = "overlay" }
-function Library._GroupMethods:Image(props)
-    props = props or {}
-    local h = props.height or (props.size and props.size.Y) or 100
-
-    local row = nextRow(self, h + 4)
-    local _, fill = framedBox(row, THEME.BorderOuter, THEME.BorderInner, THEME.Element, {
-        Position = UDim2.fromOffset(0, 2),
-        Size     = UDim2.new(1, 0, 0, h),
-        ZIndex   = 3,
-    })
-
-    local img = new("ImageLabel", {
-        BackgroundTransparency = 1,
-        Image = props.image or "rbxassetid://0",
-        ImageColor3 = props.tint or Color3.new(1,1,1),
-        ImageTransparency = props.transparency or 0,
-        ScaleType = props.scaleType or Enum.ScaleType.Fit,
-        Size = UDim2.fromScale(1,1),
-        Position = UDim2.fromOffset(0, 0),
-        ZIndex = 4,
-    }, fill)
-
-    if props.rounded and props.rounded > 0 then
-        new("UICorner", {CornerRadius = UDim.new(0, props.rounded)}, fill)
-        fill.ClipsDescendants = true
-    end
-
-    if props.text then
-        -- soft shadow strip behind the label so it stays readable over any image
-        new("Frame", {
-            BackgroundColor3 = Color3.fromRGB(0,0,0),
-            BackgroundTransparency = 0.5,
-            BorderSizePixel = 0,
-            Position = UDim2.new(0, 0, 1, -18),
-            Size     = UDim2.new(1, 0, 0, 18),
-            ZIndex = 4,
-        }, fill)
-        outlined(fill, props.text, THEME.Text, {
-            Position = UDim2.new(0, 4, 1, -16),
-            Size     = UDim2.new(1, -8, 0, 13),
-            TextSize = 11,
-            TextXAlignment = Enum.TextXAlignment.Left,
-            ZIndex = 5,
-        })
-    end
-
-    return { _img = img, _row = row, SetImage = function(_, v) img.Image = v end }
-end
-
--- roblox asset thumbnail card. pulls the name too if it can
-function Library._GroupMethods:AssetCard(assetId, opts)
-    opts = opts or {}
-    local h = opts.height or 100
-    local row = nextRow(self, h + 4)
-    local _, fill = framedBox(row, THEME.BorderOuter, THEME.BorderInner, THEME.Element, {
-        Position = UDim2.fromOffset(0, 2),
-        Size     = UDim2.new(1, 0, 0, h),
-        ZIndex   = 3,
-    })
-
-    local img = new("ImageLabel", {
-        BackgroundTransparency = 1,
-        Image = "rbxthumb://type=Asset&id=" .. tostring(assetId) .. "&w=150&h=150",
-        ScaleType = Enum.ScaleType.Fit,
-        Size = UDim2.fromScale(1,1),
-        ZIndex = 4,
-    }, fill)
-
-    local name = outlined(fill, opts.name or ("asset " .. tostring(assetId)), THEME.TextDim, {
-        Position = UDim2.new(0, 4, 0, 2),
-        Size     = UDim2.new(1, -8, 0, 12),
-        TextSize = 10, ZIndex = 5,
-    })
-
-    -- try to fetch the real name
-    task.spawn(function()
-        local ok, info = pcall(function()
-            return game:GetService("MarketplaceService"):GetProductInfo(assetId)
-        end)
-        if ok and info and info.Name then
-            name.Text = info.Name
-        end
-    end)
-
-    return { _img = img, _row = row }
-end
-
--- player avatar card. takes a Player or a UserId
-function Library._GroupMethods:AvatarCard(user, opts)
-    opts = opts or {}
-    local h = opts.height or 100
-    local row = nextRow(self, h + 4)
-    local _, fill = framedBox(row, THEME.BorderOuter, THEME.BorderInner, THEME.Element, {
-        Position = UDim2.fromOffset(0, 2),
-        Size     = UDim2.new(1, 0, 0, h),
-        ZIndex   = 3,
-    })
-
-    local img = new("ImageLabel", {
-        BackgroundTransparency = 1,
-        Image = "rbxassetid://0",
-        ScaleType = Enum.ScaleType.Fit,
-        Size = UDim2.fromScale(1,1),
-        ZIndex = 4,
-    }, fill)
-
-    local name = outlined(fill, opts.label or "loading...", THEME.TextDim, {
-        Position = UDim2.new(0, 4, 0, 2),
-        Size     = UDim2.new(1, -8, 0, 12),
-        TextSize = 10, ZIndex = 5,
-    })
-
-    local function loadFor(usr)
-        local uid = (typeof(usr) == "Instance" and usr:IsA("Player")) and usr.UserId or usr
-        if typeof(usr) == "Instance" and usr:IsA("Player") then
-            name.Text = usr.DisplayName .. " (@" .. usr.Name .. ")"
-        end
-        task.spawn(function()
-            local thumbType = opts.full and Enum.ThumbnailType.AvatarBust or Enum.ThumbnailType.HeadShot
-            local thumbSize = opts.full and Enum.ThumbnailSize.Size420x420 or Enum.ThumbnailSize.Size150x150
-            local ok, url = pcall(function()
-                return Players:GetUserThumbnailAsync(uid, thumbType, thumbSize)
-            end)
-            if ok and url then img.Image = url end
-        end)
-    end
-
-    if user ~= nil then loadFor(user) end
-
-    return {
-        _img = img, _row = row,
-        Load = function(_, usr) loadFor(usr) end,
-        SetImage = function(_, v) img.Image = v end,
-    }
-end
-
--- row of circular player heads
--- users = { Player or userId, Player or userId, ... }
-function Library._GroupMethods:AvatarRow(users, opts)
-    opts = opts or {}
-    local size = opts.size or 28
-    local gap  = opts.gap or 4
-    local row  = nextRow(self, size)
-
-    local host = new("Frame", {
-        BackgroundTransparency = 1,
-        Size = UDim2.new(1, 0, 0, size),
-        ZIndex = 3,
-    }, row)
-    new("UIListLayout", {
-        FillDirection = Enum.FillDirection.Horizontal,
-        Padding = UDim.new(0, gap),
-        SortOrder = Enum.SortOrder.LayoutOrder,
-    }, host)
-
-    local cards = {}
-    for i, u in ipairs(users or {}) do
-        local btn = new("ImageLabel", {
-            BackgroundColor3 = THEME.Element,
-            BorderSizePixel = 0,
-            Size = UDim2.fromOffset(size, size),
-            Image = "rbxassetid://0",
-            LayoutOrder = i,
-            ZIndex = 3,
-        }, host)
-        new("UIStroke", {
-            Color = THEME.BorderInner, Thickness = 1,
-            ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
-        }, btn)
-        new("UICorner", {CornerRadius = UDim.new(1, 0)}, btn)
-
-        local uid = (typeof(u) == "Instance" and u:IsA("Player")) and u.UserId or u
-        task.spawn(function()
-            local ok, url = pcall(function()
-                return Players:GetUserThumbnailAsync(uid,
-                    Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
-            end)
-            if ok and url then btn.Image = url end
-        end)
-        cards[#cards + 1] = btn
-    end
-    return host, cards
-end
-
 -- collapsible mini-group. behaves like a Group so you can nest controls
 function Library._GroupMethods:SubGroup(title, collapsed)
     local parentGroup = self
@@ -1735,6 +1548,7 @@ function Library._GroupMethods:SubGroup(title, collapsed)
     }, body)
     vGradient(header, THEME.HeaderTop, THEME.HeaderBottom)
 
+    -- arrow char flips open/closed
     local arrow = outlined(header, "v", THEME.TextDim, {
         Position = UDim2.fromOffset(6,0),
         Size     = UDim2.fromOffset(12, HEADER_H),
