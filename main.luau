@@ -196,7 +196,6 @@ local function register(flagName, ctrl)
     Library._registered[#Library._registered + 1] = flagName
 end
 
--- anything that should react to accent change gets pushed here
 local function registerAccent(frame, grad, fn)
     Library._accentTargets[#Library._accentTargets + 1] = {frame = frame, grad = grad, fn = fn}
 end
@@ -288,11 +287,10 @@ local function ensureFolder()
     if not isfolder then return end
     if not isfolder(CONFIG_FOLDER) then pcall(makefolder, CONFIG_FOLDER) end
 end
-ensureFolder()  -- create it right away so it shows up in the executor folder list
+ensureFolder()
 
 local function configPath(name) return CONFIG_FOLDER .. "/" .. name .. ".json" end
 
--- roblox types don't json naturally so tag them
 local function serializeValue(v)
     local t = typeof(v)
     if t == "Color3"   then return {__type = "Color3", r = v.R, g = v.G, b = v.B} end
@@ -318,7 +316,6 @@ local function deserializeValue(v)
     return v
 end
 
--- can't rely on HttpService json, so rolled a small one
 local function jsonEncode(val)
     local t = type(val)
     if t == "nil" then return "null" end
@@ -535,14 +532,12 @@ local popupLayer = new("Frame", {
     Size = UDim2.fromScale(1, 1), ZIndex = 500,
 }, screenGui)
 
--- anything popup-ish goes here so it's easy to kill all at once
 local openPopups = {}
 local function closeAllPopups()
     for _, fn in ipairs(openPopups) do pcall(fn) end
     table.clear(openPopups)
 end
 
--- scrolling gets disabled while dragging a slider / picker so they don't fight
 local function setScrollLocked(locked)
     for _, w in ipairs(Library._windows) do
         for _, tab in ipairs(w.Tabs) do
@@ -616,7 +611,6 @@ function Library.Notify(title, body, duration, accent)
 
     tween(row, 0.22, {GroupTransparency = 0}):Play()
 
-    -- two timers: tween completion + hard fallback in case tween dies
     task.delay(duration, function()
         if not row.Parent then return end
         local fadeOut = TweenService:Create(row,
@@ -638,6 +632,7 @@ end
 -- ============================================================
 local MIN_SIZE = Vector2.new(320, 260)
 local MAX_SIZE = Vector2.new(900, 800)
+local EDGE_PAD = 40
 
 local function syncTabGap(win)
     local tab = win.ActiveTab
@@ -655,7 +650,6 @@ local function syncTabGap(win)
     seg(win._iT2, gx + tw - 1, panelW - gx - tw)
 end
 
--- resize handles around the window. clamped so it can't leave the screen
 local function addResizeHandles(canvas, onResize)
     local T = IS_MOBILE and 8 or 4
 
@@ -689,11 +683,14 @@ local function addResizeHandles(canvas, onResize)
         }, host)
 
         local active, startSize, startPos, startMouse = false, nil, nil, nil
+        local startOffX, startOffY = 0, 0
         h.InputBegan:Connect(function(i)
             if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
                 active = true
                 startSize = Vector2.new(canvas.Size.X.Offset, canvas.Size.Y.Offset)
                 startPos  = canvas.Position
+                startOffX = startPos.X.Offset
+                startOffY = startPos.Y.Offset
                 startMouse = UIS:GetMouseLocation()
                 closeAllPopups()
             end
@@ -707,14 +704,11 @@ local function addResizeHandles(canvas, onResize)
             local ox = (e.sx < 0) and (startSize.X - w) or 0
             local oy = (e.sy < 0) and (startSize.Y - ht) or 0
 
-            -- keep the whole window on screen so resize can't shove it off
             local vp = workspace.CurrentCamera.ViewportSize
-            local nx = startPos.X.Offset + ox
-            local ny = startPos.Y.Offset + oy
-            local maxX = vp.X - 40
-            local maxY = vp.Y - 40
-            nx = math.clamp(nx, -(w - 40), maxX)
-            ny = math.clamp(ny, 0, maxY)
+            local nx = startOffX + ox
+            local ny = startOffY + oy
+            nx = math.clamp(nx, -(w - EDGE_PAD), vp.X - EDGE_PAD)
+            ny = math.clamp(ny, 0, vp.Y - EDGE_PAD)
 
             canvas.Size = UDim2.fromOffset(w, ht)
             canvas.Position = UDim2.new(startPos.X.Scale, nx, startPos.Y.Scale, ny)
@@ -743,7 +737,6 @@ function Library:Window(opts)
         ZIndex = 10,
     }, screenGui)
 
-    -- clip everything. this is what stopped the "grows past window" bug
     local wOuter = new("Frame", {
         BackgroundColor3 = THEME.BorderOuter,
         BorderSizePixel = 0,
@@ -781,7 +774,6 @@ function Library:Window(opts)
         Size = UDim2.fromOffset(0, TAB_H), ZIndex = 4,
     }, canvas)
 
-    -- fixed viewport. clipping + no autosize = window can't grow itself
     local pageHost = new("Frame", {
         Name = "Pages", BackgroundTransparency = 1,
         Position = UDim2.fromOffset(16, 34), Size = UDim2.new(1,-32,1,-50),
@@ -791,11 +783,14 @@ function Library:Window(opts)
 
     local dragZone = new("TextButton", {BackgroundTransparency = 1, Text = "", Position = UDim2.fromOffset(0,0), Size = UDim2.new(1,-14,0,27), ZIndex = 7, AutoButtonColor = false}, canvas)
     do
-        local dragging, startPos, startMouse
+        local dragging, startPos, startMouse = false, nil, nil
+        local startOffX, startOffY = 0, 0
         dragZone.InputBegan:Connect(function(i)
             if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
                 dragging = true
                 startPos = canvas.Position
+                startOffX = startPos.X.Offset
+                startOffY = startPos.Y.Offset
                 startMouse = UIS:GetMouseLocation()
                 closeAllPopups()
             end
@@ -804,7 +799,14 @@ function Library:Window(opts)
             if not dragging then return end
             if i.UserInputType ~= Enum.UserInputType.MouseMovement and i.UserInputType ~= Enum.UserInputType.Touch then return end
             local d = UIS:GetMouseLocation() - startMouse
-            canvas.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
+            local vp = workspace.CurrentCamera.ViewportSize
+            local w = canvas.Size.X.Offset
+            local h = canvas.Size.Y.Offset
+            local nx = startOffX + d.X
+            local ny = startOffY + d.Y
+            nx = math.clamp(nx, -(w - EDGE_PAD), vp.X - EDGE_PAD)
+            ny = math.clamp(ny, 0, vp.Y - EDGE_PAD)
+            canvas.Position = UDim2.new(startPos.X.Scale, nx, startPos.Y.Scale, ny)
         end)
         UIS.InputEnded:Connect(function(i)
             if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
@@ -856,7 +858,6 @@ function Library._WindowMethods:Tab(name)
         Size = UDim2.new(1,0,0,win._tabH), TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 8,
     })
 
-    -- scrollframe just uses scale(1,1) inside pageHost. canvas size follows content
     local page = new("ScrollingFrame", {
         Name = name, BackgroundTransparency = 1, Visible = false,
         Size = UDim2.fromScale(1,1),
@@ -1076,7 +1077,6 @@ function Library._GroupMethods:Checkbox(text, default, callback, extra)
     return buildCheckbox(self, text, default, callback, extra, extra and extra.flag)
 end
 
--- color swatch. tag it so theme swap doesn't recolor it
 local function makeSwatch(parent, size, pos, initialColor, onChange)
     local btn = new("TextButton", {
         Text = "", AutoButtonColor = false, BackgroundTransparency = 1,
@@ -1238,7 +1238,6 @@ local function buildComboPopup(box, items, isMulti, getState, onPick)
         end)
     end
 
-    -- click-off catcher
     local blocker = new("TextButton", {
         Name = "Blocker", BackgroundTransparency = 1, Text = "", AutoButtonColor = false,
         Size = UDim2.fromScale(1, 1), ZIndex = 500,
@@ -1342,7 +1341,6 @@ local function makeKeybindBox(parent, key, mode, onKey, onMode)
         end)
     end)
 
-    -- right click opens mode picker (toggle / hold / always)
     local function openModePopup()
         closeAllPopups()
         local abs = bFill.AbsolutePosition
@@ -1365,7 +1363,6 @@ local function makeKeybindBox(parent, key, mode, onKey, onMode)
 
     box.MouseButton2Click:Connect(openModePopup)
 
-    -- mobile: long press = same thing
     local lpStart = nil
     box.InputBegan:Connect(function(i)
         if i.UserInputType == Enum.UserInputType.Touch then lpStart = tick() end
@@ -1436,7 +1433,6 @@ function Library._GroupMethods:Textbox(text, default, callback, flagName)
     return ctrl
 end
 
--- plain button. subText = optional small line under the label
 function Library._GroupMethods:Button(text, callback, subText)
     local H = subText and 28 or 19
     local row = nextRow(self, H, "TextButton")
@@ -1474,9 +1470,6 @@ function Library._GroupMethods:Button(text, callback, subText)
     return row
 end
 
--- grid of buttons
--- buttons = { {"save", fn}, {"load", fn}, {"reset", fn} }
--- columns = how many per row (default = all in one row)
 function Library._GroupMethods:ButtonRow(buttons, columns)
     buttons = buttons or {}
     columns = columns or #buttons
@@ -1515,7 +1508,6 @@ function Library._GroupMethods:ButtonRow(buttons, columns)
     return host
 end
 
--- collapsible mini-group. behaves like a Group so you can nest controls
 function Library._GroupMethods:SubGroup(title, collapsed)
     local parentGroup = self
     parentGroup._order += 1
@@ -1548,7 +1540,6 @@ function Library._GroupMethods:SubGroup(title, collapsed)
     }, body)
     vGradient(header, THEME.HeaderTop, THEME.HeaderBottom)
 
-    -- arrow char flips open/closed
     local arrow = outlined(header, "v", THEME.TextDim, {
         Position = UDim2.fromOffset(6,0),
         Size     = UDim2.fromOffset(12, HEADER_H),
@@ -1592,7 +1583,7 @@ function Library._GroupMethods:SubGroup(title, collapsed)
         if not open then tween(arrow, 0.12, {TextColor3 = THEME.TextDim}):Play() end
     end)
 
-    local sub = setmetatable({
+    return setmetatable({
         Tab          = parentGroup.Tab,
         Content      = content,
         _order       = 0,
@@ -1604,12 +1595,8 @@ function Library._GroupMethods:SubGroup(title, collapsed)
         end,
         _isOpen      = function() return open end,
     }, {__index = Library._GroupMethods})
-    return sub
 end
 
--- ============================================================
--- color picker popup
--- ============================================================
 function Library._ColorPicker(parent, pos, startColor, onChange)
     local h, s, v = Color3.toHSV(startColor)
     local W   = IS_MOBILE and 200 or 140
@@ -1680,7 +1667,7 @@ function Library._ColorPicker(parent, pos, startColor, onChange)
 end
 
 -- ============================================================
--- watermark
+-- watermark (labels and strip non-interactive so drag works)
 -- ============================================================
 Library.Watermark = {
     enabled = true,
@@ -1713,12 +1700,14 @@ function Library.Watermark.refresh()
                 if c:IsA("TextLabel") then c:Destroy() end
             end
             for i, p in ipairs(parts) do
-                outlined(strip, p.t, p.c, {
+                local lbl = outlined(strip, p.t, p.c, {
                     AutomaticSize = Enum.AutomaticSize.X,
                     Size = UDim2.fromOffset(0, H - 4),
                     TextTruncate = Enum.TextTruncate.None,
                     LayoutOrder = i, ZIndex = 401,
                 })
+                lbl.Active = false
+                pcall(function() lbl.Interactable = false end)
             end
         end
     end
@@ -1731,21 +1720,44 @@ local function makeWatermark()
         Name = "Watermark", BackgroundColor3 = THEME.BorderOuter, BorderSizePixel = 0,
         Position = UDim2.fromOffset(10, 10), Size = UDim2.fromOffset(100, H), ZIndex = 400,
         Visible = wm.enabled,
+        Active = false,
     }, screenGui)
-    new("Frame", {BackgroundColor3 = THEME.BorderInner, BorderSizePixel = 0, Position = UDim2.fromOffset(1,1), Size = UDim2.new(1,-2,1,-2), ZIndex = 400}, host)
-    local fill = new("Frame", {Name = "Fill", BackgroundColor3 = THEME.Window, BorderSizePixel = 0, Position = UDim2.fromOffset(2,2), Size = UDim2.new(1,-4,1,-4), ZIndex = 400}, host)
+    host.Active = false
+    pcall(function() host.Interactable = false end)
+
+    new("Frame", {BackgroundColor3 = THEME.BorderInner, BorderSizePixel = 0,
+        Position = UDim2.fromOffset(1,1), Size = UDim2.new(1,-2,1,-2), ZIndex = 400, Active = false}, host)
+    local fill = new("Frame", {Name = "Fill", BackgroundColor3 = THEME.Window, BorderSizePixel = 0,
+        Position = UDim2.fromOffset(2,2), Size = UDim2.new(1,-4,1,-4), ZIndex = 400, Active = false}, host)
+    fill.Active = false
+    pcall(function() fill.Interactable = false end)
     vGradient(fill, Color3.fromRGB(17,17,16), Color3.fromRGB(15,14,14))
 
-    local strip = new("Frame", {Name = "Strip", BackgroundTransparency = 1, Position = UDim2.fromOffset(6, 0), Size = UDim2.new(1,-6,1,0), ZIndex = 401}, fill)
+    local strip = new("Frame", {Name = "Strip", BackgroundTransparency = 1,
+        Position = UDim2.fromOffset(6, 0), Size = UDim2.new(1,-6,1,0), ZIndex = 401, Active = false}, fill)
+    strip.Active = false
+    pcall(function() strip.Interactable = false end)
     new("UIListLayout", {FillDirection = Enum.FillDirection.Horizontal, VerticalAlignment = Enum.VerticalAlignment.Center, Padding = UDim.new(0,4), SortOrder = Enum.SortOrder.LayoutOrder}, strip)
 
     wm.host = host
 
-    local grab = new("TextButton", {Name = "Drag", Text = "", AutoButtonColor = false, BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), ZIndex = 402}, host)
+    -- grab is on top with high ZIndex so it always catches the drag
+    local grab = new("TextButton", {
+        Name = "Drag", Text = "", AutoButtonColor = false,
+        BackgroundTransparency = 1,
+        Size = UDim2.fromScale(1, 1),
+        ZIndex = 999,
+        Active = true,
+        Selectable = true,
+    }, host)
+    grab.Active = true
+
     local dragging, startPos, startMouse = false, nil, nil
     grab.InputBegan:Connect(function(i)
         if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-            dragging = true; startPos = host.Position; startMouse = UIS:GetMouseLocation()
+            dragging = true
+            startPos = host.Position
+            startMouse = UIS:GetMouseLocation()
             closeAllPopups()
         end
     end)
@@ -1766,7 +1778,7 @@ local function makeWatermark()
 end
 
 -- ============================================================
--- hotkeys panel (floating list of binds)
+-- hotkeys panel
 -- ============================================================
 local function makeHotkeyPanel()
     local W, HDR = 180, 17
@@ -1835,7 +1847,7 @@ local function makeHotkeyPanel()
 end
 
 -- ============================================================
--- custom cursor
+-- cursor
 -- ============================================================
 local function makeCursor()
     local S, C = 11, 5
@@ -1891,7 +1903,7 @@ local function setCursorEnabled(on)
 end
 
 -- ============================================================
--- mobile floating toggle button
+-- mobile toggle
 -- ============================================================
 local function makeMobileToggle(onTap)
     local S, R = 42, 12
@@ -1909,14 +1921,12 @@ local function makeMobileToggle(onTap)
 
     new("UIStroke", {Color = THEME.BorderInner, Thickness = 1.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border}, host)
 
-    -- 3 bars = hamburger
     local icon = new("Frame", {BackgroundTransparency = 1, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(17, 13), ZIndex = 452}, fill)
     for i = 1, 3 do
         local bar = new("Frame", {BackgroundColor3 = THEME.Accent, BorderSizePixel = 0, Position = UDim2.fromOffset(0, (i-1) * 5), Size = UDim2.new(1, 0, 0, 2), ZIndex = 452}, icon)
         registerAccent(bar, nil)
     end
 
-    -- tap = toggle, drag = move
     local dragging, moved, startPos, startMouse = false, false, nil, nil
     host.InputBegan:Connect(function(i)
         if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
@@ -1967,7 +1977,6 @@ function Library:BindToggle(window)
         if i.KeyCode == Library.ToggleKey then toggle() end
     end)
 
-    -- mobile gets a floating button automatically
     if IS_MOBILE then
         Library._spawnMobileToggle(toggle)
     end
