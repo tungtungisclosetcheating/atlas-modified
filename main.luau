@@ -1,4 +1,4 @@
--- free ui library. do whatever with it.
+-- atlas ui library. do whatever with it.
 local UIS          = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 local RunService   = game:GetService("RunService")
@@ -121,6 +121,8 @@ Library._hotkeys       = {}
 Library._hotkeyPanel   = nil
 Library._accentTargets = {}
 Library.Watermark      = nil
+Library.ConfigFolder   = "atlas"   -- change this from your script any time
+
 local screenGui
 
 local function register(flagName, ctrl)
@@ -184,13 +186,16 @@ function Library.ResetTheme()
     Library.SetAccent(DEFAULT_THEME.Accent)
 end
 
-local CONFIG_FOLDER = "UI_Configs"
+-- ============================================================
+-- config manager (folder name is read live from Library.ConfigFolder)
+-- ============================================================
 local function ensureFolder()
     if not isfolder then return end
-    if not isfolder(CONFIG_FOLDER) then pcall(makefolder, CONFIG_FOLDER) end
+    if not isfolder(Library.ConfigFolder) then pcall(makefolder, Library.ConfigFolder) end
 end
-ensureFolder()
-local function configPath(name) return CONFIG_FOLDER .. "/" .. name .. ".json" end
+local function configPath(name)
+    return Library.ConfigFolder .. "/" .. name .. ".json"
+end
 
 local function serializeValue(v)
     local t = typeof(v)
@@ -378,7 +383,7 @@ function Library.listConfigs()
     if not listfiles or not isfolder then return {} end
     ensureFolder()
     local out = {}
-    local ok, files = pcall(listfiles, CONFIG_FOLDER)
+    local ok, files = pcall(listfiles, Library.ConfigFolder)
     if not ok or not files then return out end
     for _, f in ipairs(files) do
         local n = f:match("([^/\\]+)%.json$")
@@ -386,9 +391,18 @@ function Library.listConfigs()
     end
     return out
 end
+function Library.deleteConfig(name)
+    if not delfile then return false end
+    return pcall(delfile, configPath(name))
+end
+function Library.setConfigFolder(name)
+    if type(name) ~= "string" or name == "" then return end
+    Library.ConfigFolder = name
+    ensureFolder()
+end
 
 screenGui = new("ScreenGui", {
-    Name = "ui", IgnoreGuiInset = true, ResetOnSpawn = false,
+    Name = "atlas", IgnoreGuiInset = true, ResetOnSpawn = false,
     ZIndexBehavior = Enum.ZIndexBehavior.Sibling, DisplayOrder = 999,
 }, guiParent())
 Library.Screen = screenGui
@@ -447,13 +461,9 @@ function Library.Notify(title, body, duration, accent)
     return row
 end
 
--- ============================================================
--- window
--- ============================================================
 local MIN_SIZE = Vector2.new(320, 260)
 local MAX_SIZE = Vector2.new(900, 800)
 
--- clamp a UDim2 in ABSOLUTE screen space (this is the fix)
 local function clampAbs(scale, offset, sizePx, viewportPx)
     local absPos = scale * viewportPx + offset
     local maxAbs = math.max(0, viewportPx - sizePx)
@@ -617,7 +627,6 @@ function Library:Window(opts)
             local vp = workspace.CurrentCamera.ViewportSize
             local w = canvas.Size.X.Offset
             local h = canvas.Size.Y.Offset
-            -- clamp in absolute screen space, not offset space
             local nx = clampAbs(startPos.X.Scale, startOffX + d.X, w, vp.X)
             local ny = clampAbs(startPos.Y.Scale, startOffY + d.Y, h, vp.Y)
             canvas.Position = UDim2.new(startPos.X.Scale, nx, startPos.Y.Scale, ny)
@@ -1235,12 +1244,9 @@ function Library._ColorPicker(parent, pos, startColor, onChange)
     openPopups[#openPopups+1] = function() blocker:Destroy(); pop:Destroy() end
 end
 
--- ============================================================
--- watermark. drag uses MouseButton1Down (more reliable than InputBegan on TextButton)
--- ============================================================
 Library.Watermark = {
     enabled = true,
-    label1  = "ui",
+    label1  = "atlas",
     label2  = "v" .. Library.Version,
     label3  = os.date("%b %d %Y"),
     host    = nil,
@@ -1293,15 +1299,11 @@ local function makeWatermark()
     vGradient(fill, Color3.fromRGB(17,17,16), Color3.fromRGB(15,14,14))
     local strip = new("Frame", {Name = "Strip", BackgroundTransparency = 1, Position = UDim2.fromOffset(6, 0), Size = UDim2.new(1,-6,1,0), ZIndex = 401}, fill)
     new("UIListLayout", {FillDirection = Enum.FillDirection.Horizontal, VerticalAlignment = Enum.VerticalAlignment.Center, Padding = UDim.new(0,4), SortOrder = Enum.SortOrder.LayoutOrder}, strip)
-
     wm.host = host
-
-    -- grab on top, real button
     local grab = new("TextButton", {
         Name = "Drag", Text = "", AutoButtonColor = false,
         BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), ZIndex = 999,
     }, host)
-
     local dragging, startPos, startMouse = false, nil, nil
     local function beginDrag()
         dragging = true
@@ -1328,14 +1330,10 @@ local function makeWatermark()
     UIS.InputEnded:Connect(function(i)
         if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then endDrag() end
     end)
-
     Library.Watermark.refresh()
     return host
 end
 
--- ============================================================
--- hotkeys panel
--- ============================================================
 local function makeHotkeyPanel()
     local W, HDR = 180, 17
     local host = new("Frame", {
@@ -1502,6 +1500,7 @@ local COLOR_KEYS = {
 function Library:BuildSettings(window)
     local wm = Library.Watermark
     local st = window:Tab("settings")
+
     local appearance = st:Group("appearance")
     appearance:Checkbox("show hotkeys", false, function(v)
         if Library._hotkeyPanel then
@@ -1512,9 +1511,12 @@ function Library:BuildSettings(window)
     appearance:Checkbox("custom cursor", true, function(v) Library.CursorEnabled = v end, {flag = "ui_cursor"})
     appearance:Keybind("toggle key", Library.ToggleKey, function(k) Library.ToggleKey = k end)
 
+    -- config manager
     local cfgGroup = st:Group("configs")
     local cfgName = "default"
-    cfgGroup:Label("folder: " .. CONFIG_FOLDER .. "/")
+    local folderStatus = cfgGroup and nil
+
+    cfgGroup:Label("folder: " .. Library.ConfigFolder .. "/")
     cfgGroup:Textbox("config name", cfgName, function(t) cfgName = t ~= "" and t or "default" end, "cfg_name")
     cfgGroup:ButtonRow({
         {"save", function()
@@ -1526,9 +1528,17 @@ function Library:BuildSettings(window)
             Library.Notify(ok and "config loaded" or "load failed", cfgName)
         end},
         {"delete", function()
-            if delfile then pcall(delfile, configPath(cfgName)); Library.Notify("config deleted", cfgName) end
+            local ok = Library.deleteConfig(cfgName)
+            Library.Notify(ok and "config deleted" or "delete failed", cfgName)
         end},
     }, 3)
+    cfgGroup:Label("current folder:")
+    cfgGroup:Textbox("folder name", Library.ConfigFolder, function(t)
+        if t and t ~= "" then
+            Library.setConfigFolder(t)
+            Library.Notify("folder set", t)
+        end
+    end, "cfg_folder")
 
     local wmGroup = st:Group("watermark")
     wmGroup:Checkbox("enabled", wm.enabled, function(v) wm.enabled = v; if wm.host then wm.host.Visible = v end end, {flag = "wm_enabled"})
